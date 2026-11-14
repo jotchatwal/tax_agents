@@ -141,22 +141,27 @@ def node_detect_conflicts(state: AgentState) -> Dict[str, Any]:
     proposed_changes = []
     is_factual = analysis.get("is_factual_update", False)
 
+    # Distinguish salary/income intent vs deduction/RRSP intent
+    is_deduction_query = any(k in req.lower() for k in ["deduction", "rrsp", "contribution", "contribute", "deduct", "cra deduction"])
+    is_salary_query = any(k in req.lower() for k in ["salary", "earn", "income", "wage", "pay", "raise", "increment", "promotion", "changed jobs", "new job", "earning"])
+
     # 1. Check if LLM calculated a new salary directly or extracted increment
     calculated_salary = analysis.get("calculated_new_salary_cad")
     salary_cad = analysis.get("salary_cad")
     salary_inc = analysis.get("salary_increment_cad")
 
     new_val = None
-    if calculated_salary and calculated_salary > 0:
-        new_val = float(calculated_salary)
-    elif salary_inc and salary_inc > 0:
-        new_val = cur_salary + float(salary_inc)
-    elif salary_cad and salary_cad > 0:
-        # If the number is a relative increment (e.g. 20000) and user mentioned promotion/raise
-        if salary_cad <= 35000 and any(k in req.lower() for k in ["increment", "raise", "increase", "bump"]):
-            new_val = cur_salary + float(salary_cad)
-        else:
-            new_val = float(salary_cad)
+    if not (is_deduction_query and not is_salary_query):
+        if calculated_salary and calculated_salary > 0:
+            new_val = float(calculated_salary)
+        elif salary_inc and salary_inc > 0:
+            new_val = cur_salary + float(salary_inc)
+        elif salary_cad and salary_cad > 0:
+            # If the number is a relative increment (e.g. 20000) and user mentioned promotion/raise
+            if salary_cad <= 35000 and any(k in req.lower() for k in ["increment", "raise", "bump"]):
+                new_val = cur_salary + float(salary_cad)
+            else:
+                new_val = float(salary_cad)
 
     # Determine dynamic effective date
     extracted_date = analysis.get("effective_date")
@@ -179,7 +184,7 @@ def node_detect_conflicts(state: AgentState) -> Dict[str, Any]:
         else:
             effective_date_str = datetime.now().strftime("%Y-%m-%d")
 
-    if new_val and (intent == "profile_update" or is_factual):
+    if new_val and (intent == "profile_update" or is_factual) and not (is_deduction_query and not is_salary_query):
         proposed_changes.append({
             "field": "annualized_income",
             "new_value": new_val,
@@ -187,10 +192,10 @@ def node_detect_conflicts(state: AgentState) -> Dict[str, Any]:
             "effective_date": effective_date_str,
             "reason": f"User reported salary change to ${new_val:,.0f} CAD effective {effective_date_str} (updated from ${cur_salary:,.0f} CAD)."
         })
-    elif intent == "profile_update" or any(k in req.lower() for k in ["salary is now", "earning", "raise", "increment", "promotion", "changed jobs", "new salary"]):
+    elif is_salary_query and (intent == "profile_update" or any(k in req.lower() for k in ["salary is now", "earning", "raise", "increment", "promotion", "changed jobs", "new salary"])):
         # Regex fallback for relative increments e.g. "increment of 20k", "20k raise"
-        inc_match = re.search(r'(?:raise|increment|increase)\s*(?:of)?\s*\$?(\d+)(?:\s*(k|thousand))?', req, re.IGNORECASE)
-        inc_match_alt = re.search(r'\$?(\d+)(?:\s*(k|thousand))?\s*(?:raise|increment|increase)', req, re.IGNORECASE)
+        inc_match = re.search(r'(?:salary\s+raise|salary\s+increment|salary\s+increase|pay\s+raise|pay\s+increase|raise|increment)\s*(?:of)?\s*\$?(\d+)(?:\s*(k|thousand))?', req, re.IGNORECASE)
+        inc_match_alt = re.search(r'\$?(\d+)(?:\s*(k|thousand))?\s*(?:salary\s+raise|pay\s+raise|raise|increment)', req, re.IGNORECASE)
         match = inc_match or inc_match_alt
         if match:
             num = float(match.group(1))
@@ -205,9 +210,9 @@ def node_detect_conflicts(state: AgentState) -> Dict[str, Any]:
                 "reason": f"User reported salary increment of ${inc_val:,.0f} CAD effective {effective_date_str} (updated from ${cur_salary:,.0f} CAD to ${new_val:,.0f} CAD)."
             })
         else:
-            numbers = re.findall(r'\b\d{4,7}\b', req.replace("$", "").replace(",", ""))
-            if numbers:
-                new_val = float(numbers[0])
+            sal_match = re.search(r'(?:salary|income|earnings?|pay)\s*(?:is|now|of)?\s*\$?(\d+[\d,]*)', req, re.IGNORECASE)
+            if sal_match:
+                new_val = float(sal_match.group(1).replace(",", ""))
                 proposed_changes.append({
                     "field": "annualized_income",
                     "new_value": new_val,
@@ -218,7 +223,18 @@ def node_detect_conflicts(state: AgentState) -> Dict[str, Any]:
 
     # Check for RRSP contribution or deduction mentions
     rrsp_contrib_val = analysis.get("rrsp_contribution_cad")
-    if not rrsp_contrib_val:
+    fin_ctx = profile.get("financial_context") or {}
+    cur_contrib = float(fin_ctx.get("rrsp_contribution") or 0.0)
+
+    # Check if user specifically requested to increase/change their deduction
+    m_inc_deduct = re.search(r'(?:increase|boost|add\s+to|change|set)\s+(?:my\s+)?(?:cra\s+)?(?:deduction|rrsp|contribution)\s*(?:by|to)?\s*\$?(\d+[\d,]*)', req, re.IGNORECASE)
+    if m_inc_deduct:
+        num = float(m_inc_deduct.group(1).replace(",", ""))
+        if "by" in req.lower() and cur_contrib > 0:
+            rrsp_contrib_val = cur_contrib + num
+        else:
+            rrsp_contrib_val = num
+    elif not rrsp_contrib_val:
         m_contrib = re.search(r'(?:assuming|claim(?:ing)?|contribut(?:e|ion)|deduct(?:ion)?)\s*(?:a\s+)?\$?(\d+[\d,]*)\s*(?:rrsp|deduction|\b)', req, re.IGNORECASE)
         if m_contrib:
             try:
@@ -231,7 +247,7 @@ def node_detect_conflicts(state: AgentState) -> Dict[str, Any]:
         proposed_changes.append({
             "field": "rrsp_contribution",
             "new_value": float(rrsp_contrib_val),
-            "reason": f"User specified RRSP deduction/contribution of ${rrsp_contrib_val:,.0f} CAD."
+            "reason": f"User specified CRA RRSP deduction/contribution of ${rrsp_contrib_val:,.0f} CAD."
         })
 
     # Check for RRSP deduction limit / Notice of Assessment mentions
