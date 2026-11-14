@@ -3,7 +3,7 @@
 > **Hackathon Track:** Statement Two: Memory You Can Govern  
 > **Jurisdiction:** Canada (Ontario MVP) • Tax Year 2025  
 > **Core Architecture:** MongoDB Atlas + Atlas Vector Search + LangGraph + Google Gemini + FastAPI + Hybrid UI  
-> **Technical Specifications:** See [ARCHITECTURE.md](file:///c:/Users/nimba/Desktop/Hackathon/tax_agents/ARCHITECTURE.md)
+> **Technical Specifications:** See [ARCHITECTURE.md](file:///c:/Users/nimba/Desktop/Hackathon/tax_agents/ARCHITECTURE.md) • **1-Min Technical Demo:** See [DEMO.md](file:///c:/Users/nimba/Desktop/Hackathon/tax_agents/DEMO.md)
 
 ---
 
