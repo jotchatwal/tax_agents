@@ -53,6 +53,7 @@ Analyze the user's input and return ONLY a valid JSON object matching this schem
   "calculated_new_salary_cad": number or null,
   "effective_date": string or null,
   "rrsp_contribution_cad": number or null,
+  "rrsp_limit_cad": number or null,
   "tuition_amount_cad": number or null,
   "life_event": string or null,
   "memory_action": "delete" | "correct" | null,
@@ -61,12 +62,14 @@ Analyze the user's input and return ONLY a valid JSON object matching this schem
 }}
 
 GUIDELINES:
-1. "is_factual_update": Set to true whenever the user reports an actual factual life change (e.g. "I got a promotion", "I got a raise", "my salary is now X", "I changed jobs"), EVEN IF they also ask what to look forward to or ask a question in the same sentence. If is_factual_update is true, the primary intent should be "profile_update".
+1. "is_factual_update": Set to true whenever the user reports an actual factual life change (e.g. "I got a promotion", "I got a raise", "my salary is now X", "I changed jobs", "my RRSP limit is X"), EVEN IF they also ask what to look forward to or ask a question in the same sentence. If is_factual_update is true, the primary intent should be "profile_update".
 2. If the user reports an increment or raise (e.g. "increment of 20k", "got a $15,000 raise"):
    - Put 20000 into "salary_increment_cad".
    - If current salary is known (e.g. 95000), calculate "calculated_new_salary_cad" = 95000 + 20000 = 115000.
-3. If user states an absolute new salary (e.g. "my salary is now 105,000 CAD"), put 105000 into "salary_cad" and "calculated_new_salary_cad".
-4. If user states when the change takes effect (e.g. "effective June 1st", "starting next month", "as of May 2025"), provide the date in "YYYY-MM-DD" format in "effective_date". Otherwise leave null.
+3. If user states an absolute new salary (e.g. "my salary is now 105,000 CAD", "income increased to 202,000"), put that number into "salary_cad" and "calculated_new_salary_cad".
+4. If user mentions an RRSP contribution or deduction (e.g. "deduction of $7,000", "contribute 7k to RRSP"), put that amount into "rrsp_contribution_cad".
+5. If user mentions their official CRA RRSP limit or Notice of Assessment limit (e.g. "my RRSP deduction limit is $32,490"), put that amount into "rrsp_limit_cad".
+6. If user states when the change takes effect (e.g. "effective June 1st", "starting next month", "as of May 2025"), provide the date in "YYYY-MM-DD" format in "effective_date". Otherwise leave null.
 
 User Input: "{user_message}"
 """

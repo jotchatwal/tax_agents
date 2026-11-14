@@ -216,6 +216,40 @@ def node_detect_conflicts(state: AgentState) -> Dict[str, Any]:
                     "reason": f"User reported new annualized income of ${new_val:,.0f} CAD effective {effective_date_str}."
                 })
 
+    # Check for RRSP contribution or deduction mentions
+    rrsp_contrib_val = analysis.get("rrsp_contribution_cad")
+    if not rrsp_contrib_val:
+        m_contrib = re.search(r'(?:assuming|claim(?:ing)?|contribut(?:e|ion)|deduct(?:ion)?)\s*(?:a\s+)?\$?(\d+[\d,]*)\s*(?:rrsp|deduction|\b)', req, re.IGNORECASE)
+        if m_contrib:
+            try:
+                candidate = float(m_contrib.group(1).replace(",", ""))
+                if candidate > 0 and candidate != new_val:
+                    rrsp_contrib_val = candidate
+            except Exception:
+                pass
+    if rrsp_contrib_val and rrsp_contrib_val > 0:
+        proposed_changes.append({
+            "field": "rrsp_contribution",
+            "new_value": float(rrsp_contrib_val),
+            "reason": f"User specified RRSP deduction/contribution of ${rrsp_contrib_val:,.0f} CAD."
+        })
+
+    # Check for RRSP deduction limit / Notice of Assessment mentions
+    rrsp_limit_val = analysis.get("rrsp_limit_cad")
+    if not rrsp_limit_val:
+        m_limit = re.search(r'(?:rrsp\s+limit|notice\s+of\s+assessment|noa\s+limit)\s*(?:is|of|:)?\s*\$?(\d+[\d,]*)', req, re.IGNORECASE)
+        if m_limit:
+            try:
+                rrsp_limit_val = float(m_limit.group(1).replace(",", ""))
+            except Exception:
+                pass
+    if rrsp_limit_val and rrsp_limit_val > 0:
+        proposed_changes.append({
+            "field": "rrsp_deduction_limit",
+            "new_value": float(rrsp_limit_val),
+            "reason": f"User confirmed CRA RRSP deduction limit of ${rrsp_limit_val:,.0f} CAD from Notice of Assessment."
+        })
+
     return {"proposed_memory_changes": proposed_changes}
 
 def node_retrieve_tax_rules(state: AgentState) -> Dict[str, Any]:
@@ -231,6 +265,8 @@ def node_calculate_scenarios(state: AgentState) -> Dict[str, Any]:
     profile = state.get("profile") or {}
     emp_periods = profile.get("employment_periods", [])
     fin_ctx = profile.get("financial_context", {})
+    req = state.get("request", "")
+    analysis = state.get("analysis") or {}
 
     # Determine income
     proposed = state.get("proposed_memory_changes", [])
@@ -243,8 +279,31 @@ def node_calculate_scenarios(state: AgentState) -> Dict[str, Any]:
     else:
         current_income = 85000.0
 
-    rrsp_contrib = float(fin_ctx.get("rrsp_contribution") or 5000.0)
-    rrsp_limit = fin_ctx.get("rrsp_deduction_limit")
+    # Determine RRSP contribution to model
+    proposed_rrsp = next((p for p in proposed if p["field"] == "rrsp_contribution"), None)
+    if proposed_rrsp:
+        rrsp_contrib = float(proposed_rrsp["new_value"])
+    elif analysis.get("rrsp_contribution_cad"):
+        rrsp_contrib = float(analysis["rrsp_contribution_cad"])
+    else:
+        m_rrsp = re.search(r'(?:assuming|claim(?:ing)?|contribut(?:e|ion)|deduct(?:ion)?)\s*(?:a\s+)?\$?(\d+[\d,]*)\s*(?:rrsp|deduction|\b)', req, re.IGNORECASE)
+        if m_rrsp:
+            try:
+                candidate = float(m_rrsp.group(1).replace(",", ""))
+                rrsp_contrib = candidate if candidate != current_income else float(fin_ctx.get("rrsp_contribution") or 5000.0)
+            except Exception:
+                rrsp_contrib = float(fin_ctx.get("rrsp_contribution") or 5000.0)
+        else:
+            rrsp_contrib = float(fin_ctx.get("rrsp_contribution") or 5000.0)
+
+    # Determine RRSP deduction limit
+    proposed_limit = next((p for p in proposed if p["field"] == "rrsp_deduction_limit"), None)
+    if proposed_limit:
+        rrsp_limit = float(proposed_limit["new_value"])
+    elif analysis.get("rrsp_limit_cad"):
+        rrsp_limit = float(analysis["rrsp_limit_cad"])
+    else:
+        rrsp_limit = fin_ctx.get("rrsp_deduction_limit")
 
     # Run deterministic calculator
     rrsp_calc = calculate_rrsp_what_if(
@@ -387,11 +446,15 @@ def node_persist_changes(state: AgentState) -> Dict[str, Any]:
     recommendations = state.get("recommendations", [])
     audit_events = []
 
-    # If an income update occurred, perform optimistic concurrency versioning
+    # If an income or financial context update occurred, perform optimistic concurrency versioning
     if proposed:
+        cur_version = profile.get("profile_version", 1)
+        updates = {}
         income_change = next((p for p in proposed if p["field"] == "annualized_income"), None)
+        rrsp_contrib_change = next((p for p in proposed if p["field"] == "rrsp_contribution"), None)
+        rrsp_limit_change = next((p for p in proposed if p["field"] == "rrsp_deduction_limit"), None)
+
         if income_change:
-            cur_version = profile.get("profile_version", 1)
             new_income = income_change["new_value"]
             eff_date_str = income_change.get("effective_date") or datetime.now().strftime("%Y-%m-%d")
             try:
@@ -399,42 +462,75 @@ def node_persist_changes(state: AgentState) -> Dict[str, Any]:
             except Exception:
                 eff_datetime = datetime.now()
 
-            # 1. Update Profile in Atlas (increments version and sets effective_from)
+            updates["employment_periods.0.annualized_income"] = new_income
+            updates["employment_periods.0.actual_income_earned"] = new_income
+            updates["employment_periods.0.effective_from"] = eff_datetime
+
+            # If user has no confirmed NOA limit, auto-populate statutory 18% estimate
+            cur_fin = profile.get("financial_context") or {}
+            if not cur_fin.get("rrsp_deduction_limit"):
+                statutory_limit = min(new_income * 0.18, 32490.0)
+                updates["financial_context.rrsp_deduction_limit"] = statutory_limit
+
+        if rrsp_contrib_change:
+            updates["financial_context.rrsp_contribution"] = rrsp_contrib_change["new_value"]
+
+        if rrsp_limit_change:
+            updates["financial_context.rrsp_deduction_limit"] = rrsp_limit_change["new_value"]
+
+        if updates:
             updated_profile = profile_repo.update_profile_version(
                 user_id=user_id,
                 tax_year=2025,
-                updates={
-                    "employment_periods.0.annualized_income": new_income,
-                    "employment_periods.0.actual_income_earned": new_income,
-                    "employment_periods.0.effective_from": eff_datetime
-                },
+                updates=updates,
                 expected_version=cur_version
             )
 
-            # 2. Find old active income memory to supersede
-            active_income_mems = memory_repo.get_active_memories(user_id, memory_type="employment_income")
-            old_mem_id = active_income_mems[0]["_id"] if active_income_mems else None
+            # Handle income memory supersession
+            if income_change:
+                active_income_mems = memory_repo.get_active_memories(user_id, memory_type="employment_income")
+                old_mem_id = active_income_mems[0]["_id"] if active_income_mems else None
 
-            if old_mem_id:
-                new_mem_id = memory_service.supersede_memory_fact(
-                    user_id=user_id,
-                    old_memory_id=old_mem_id,
-                    new_content=f"Alex confirmed updated annual salary of ${new_income:,.0f} CAD effective {eff_date_str}.",
-                    new_structured_data={
-                        "annualized_income": new_income,
-                        "currency": "CAD",
-                        "memory_type": "employment_income",
-                        "effective_from": eff_date_str
-                    },
-                    profile_version=cur_version + 1,
-                    reason=income_change["reason"]
-                )
-                audit_events.append({
-                    "action": "supersede",
-                    "entity": "agent_memory",
-                    "old_id": str(old_mem_id),
-                    "new_id": new_mem_id
-                })
+                if old_mem_id:
+                    new_mem_id = memory_service.supersede_memory_fact(
+                        user_id=user_id,
+                        old_memory_id=old_mem_id,
+                        new_content=f"Alex confirmed updated annual salary of ${new_income:,.0f} CAD effective {eff_date_str}.",
+                        new_structured_data={
+                            "annualized_income": new_income,
+                            "currency": "CAD",
+                            "memory_type": "employment_income",
+                            "effective_from": eff_date_str
+                        },
+                        profile_version=cur_version + 1,
+                        reason=income_change["reason"]
+                    )
+                    audit_events.append({
+                        "action": "supersede",
+                        "entity": "agent_memory",
+                        "old_id": str(old_mem_id),
+                        "new_id": new_mem_id
+                    })
+
+            # Handle RRSP limit confirmation memory
+            if rrsp_limit_change:
+                limit_val = rrsp_limit_change["new_value"]
+                active_limit_mems = memory_repo.get_active_memories(user_id, memory_type="rrsp_limit")
+                old_limit_id = active_limit_mems[0]["_id"] if active_limit_mems else None
+                if old_limit_id:
+                    new_limit_id = memory_service.supersede_memory_fact(
+                        user_id=user_id,
+                        old_memory_id=old_limit_id,
+                        new_content=f"Alex confirmed CRA RRSP deduction limit of ${limit_val:,.0f} CAD from Notice of Assessment.",
+                        new_structured_data={
+                            "rrsp_deduction_limit": limit_val,
+                            "currency": "CAD",
+                            "memory_type": "rrsp_limit"
+                        },
+                        profile_version=cur_version + 1,
+                        reason=rrsp_limit_change["reason"]
+                    )
+                    audit_events.append({"action": "supersede", "entity": "agent_memory", "old_id": str(old_limit_id), "new_id": new_limit_id})
 
             if updated_profile:
                 profile = updated_profile
