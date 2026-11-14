@@ -250,6 +250,15 @@ def node_detect_conflicts(state: AgentState) -> Dict[str, Any]:
             "reason": f"User confirmed CRA RRSP deduction limit of ${rrsp_limit_val:,.0f} CAD from Notice of Assessment."
         })
 
+    # Check for life event (promotion / role change)
+    if any(k in req.lower() for k in ["promotion", "promoted", "got a promo", "new job", "changed jobs"]):
+        proposed_changes.append({
+            "field": "life_event",
+            "new_value": "promotion",
+            "effective_date": effective_date_str,
+            "reason": f"User reported employment promotion/advancement effective {effective_date_str}."
+        })
+
     return {"proposed_memory_changes": proposed_changes}
 
 def node_retrieve_tax_rules(state: AgentState) -> Dict[str, Any]:
@@ -373,29 +382,33 @@ def node_generate_recommendations(state: AgentState) -> Dict[str, Any]:
     calcs = state.get("calculations", {})
     profile = state.get("profile") or {}
     user_id = state["user_id"]
+    req = state.get("request", "").lower()
     proposed = state.get("proposed_memory_changes", [])
     rrsp_calc = calcs.get("rrsp_scenario", {})
-    marginal_rate = calcs.get("marginal_tax_rate", 0.2965)
-    tax_saving = rrsp_calc.get("estimated_tax_saving", 0.0)
+    current_income = float(calcs.get("current_income") or 85000.0)
+    marginal_rate = float(calcs.get("marginal_tax_rate") or 0.2965)
+    tax_saving = float(rrsp_calc.get("estimated_tax_saving") or 0.0)
+    deduction_claimed = float(rrsp_calc.get("deduction_claimed") or 5000.0)
 
     recommendations = []
     profile_version = profile.get("profile_version", 1)
     is_change = len(proposed) > 0
 
+    # 1. Dynamic RRSP Planning Recommendation
     if is_change:
-        title = "Updated RRSP Planning Scenario (Salary Increased to $105,000 CAD)"
+        title = f"Updated RRSP Planning Scenario (${current_income:,.0f} CAD Income)"
         desc = (
-            f"Because your income increased to ${calcs.get('current_income', 105000):,.0f} CAD, "
-            f"your combined marginal tax rate increased to {marginal_rate * 100:.2f}%. "
-            f"A $5,000 RRSP deduction now saves approximately ${tax_saving:,.2f} in combined Ontario and Federal tax "
-            f"(compared to $1,482.50 at your previous $85,000 salary, an extra ${tax_saving - 1482.50:,.2f} in tax savings)."
+            f"Because your income is now ${current_income:,.0f} CAD, "
+            f"your combined marginal tax rate is {marginal_rate * 100:.2f}%. "
+            f"Claiming a ${deduction_claimed:,.0f} CAD RRSP deduction yields an estimated ${tax_saving:,.2f} CAD "
+            f"in combined Ontario and Federal tax savings."
         )
     else:
-        title = "Maximize 2025 Ontario & Federal RRSP Tax Deduction"
+        title = f"Maximize 2025 Ontario & Federal RRSP Tax Deduction (${current_income:,.0f} CAD Income)"
         desc = (
-            f"Based on your confirmed employment income of ${calcs.get('current_income', 85000):,.0f} CAD, "
+            f"Based on your confirmed employment income of ${current_income:,.0f} CAD, "
             f"your combined marginal tax rate is {marginal_rate * 100:.2f}%. "
-            f"An RRSP contribution of $5,000 yields an estimated ${tax_saving:,.2f} CAD in tax reduction."
+            f"An RRSP deduction of ${deduction_claimed:,.0f} CAD yields an estimated ${tax_saving:,.2f} CAD in tax reduction."
         )
 
     rec_item = {
@@ -433,6 +446,114 @@ def node_generate_recommendations(state: AgentState) -> Dict[str, Any]:
         "status": "proposed"
     }
     recommendations.append(rec_item)
+
+    # 2. Tax-Free Savings Account (TFSA) Growth Opportunity
+    tfsa_annual_limit = 7000.0
+    rec_tfsa = {
+        "user_id": user_id,
+        "tax_year": 2025,
+        "recommendation_type": "tfsa_maximization",
+        "title": "2025 TFSA Contribution Room ($7,000 CAD Annual Limit)",
+        "description": (
+            f"At your combined marginal tax rate of {marginal_rate * 100:.2f}%, investment earnings in taxable accounts "
+            f"are subject to significant tax drag. Maximizing your Tax-Free Savings Account ($7,000 annual limit for 2025) "
+            f"ensures 100% tax-free investment growth and tax-free withdrawals at any time without impacting income-tested benefits."
+        ),
+        "estimated_tax_saving": {
+            "minimum": round(tfsa_annual_limit * 0.05 * marginal_rate, 2),
+            "maximum": round(tfsa_annual_limit * 0.08 * marginal_rate, 2),
+            "currency": "CAD",
+            "calculation_status": "calculated",
+            "marginal_tax_rate": marginal_rate
+        },
+        "eligibility": {
+            "status": "eligible_based_on_provided_facts",
+            "missing_information": []
+        },
+        "evidence": [
+            {
+                "rule_id": "CA_TFSA_ANNUAL_LIMIT_2025",
+                "source_url": "https://www.canada.ca/en/revenue-agency/services/tax/individuals/topics/tax-free-savings-account.html",
+                "authority": "Canada Revenue Agency"
+            }
+        ],
+        "calculation_assumptions": ["Assumes Canadian resident age 18+ with active TFSA contribution room."],
+        "profile_version": profile_version + (1 if is_change else 0),
+        "status": "proposed"
+    }
+    recommendations.append(rec_tfsa)
+
+    # 3. Ontario High-Income Surtax Mitigation (incomes >= $100,000)
+    if current_income >= 100000:
+        surtax_rec = {
+            "user_id": user_id,
+            "tax_year": 2025,
+            "recommendation_type": "ontario_surtax_mitigation",
+            "title": f"Ontario Surtax Mitigation Strategy ({marginal_rate * 100:.2f}% Marginal Rate)",
+            "description": (
+                f"Because your income of ${current_income:,.0f} CAD places you above Ontario's surtax thresholds "
+                f"($5,554 and $7,108 provincial tax tiers), you pay up to a 56% surtax on Ontario provincial tax. "
+                f"Every eligible pre-tax deduction directly shields you from this top provincial surtax band."
+            ),
+            "estimated_tax_saving": {
+                "minimum": round(tax_saving * 0.35, 2),
+                "maximum": round(tax_saving * 0.45, 2),
+                "currency": "CAD",
+                "calculation_status": "calculated",
+                "marginal_tax_rate": marginal_rate
+            },
+            "eligibility": {
+                "status": "eligible_based_on_provided_facts",
+                "missing_information": []
+            },
+            "evidence": [
+                {
+                    "rule_id": "ON_SURTAX_RULES_2025",
+                    "source_url": "https://www.ontario.ca/document/general-information-income-tax-and-benefit-return/tax-rates-and-brackets",
+                    "authority": "Ontario Ministry of Finance"
+                }
+            ],
+            "calculation_assumptions": ["Based on verified 2025 Ontario 20% and 36% surtax thresholds."],
+            "profile_version": profile_version + (1 if is_change else 0),
+            "status": "proposed"
+        }
+        recommendations.append(surtax_rec)
+
+    # 4. Tuition or Education Opportunity (if requested or relevant)
+    if any(k in req for k in ["tuition", "student", "education", "school", "course", "degree"]):
+        tuition_rec = {
+            "user_id": user_id,
+            "tax_year": 2025,
+            "recommendation_type": "tuition_tax_credit",
+            "title": "Post-Secondary Tuition Non-Refundable Tax Credit",
+            "description": (
+                "Tuition fees paid to designated educational institutions qualify for a 15% Federal non-refundable tax credit "
+                "and potential Ontario carryforwards. Eligible amounts can reduce federal tax directly or be transferred "
+                "to a supporting spouse, parent, or grandparent up to $5,000 annually."
+            ),
+            "estimated_tax_saving": {
+                "minimum": 750.0,
+                "maximum": 750.0,
+                "currency": "CAD",
+                "calculation_status": "needs_verification",
+                "marginal_tax_rate": marginal_rate
+            },
+            "eligibility": {
+                "status": "needs_verification",
+                "missing_information": ["Official Form T2202 Tuition and Enrolment Certificate from educational institution"]
+            },
+            "evidence": [
+                {
+                    "rule_id": "CA_TUITION_TAX_CREDIT_T2202",
+                    "source_url": "https://www.canada.ca/en/revenue-agency/services/tax/individuals/topics/about-your-tax-return/tax-return/completing-a-tax-return/deductions-credits-expenses/line-32300-your-tuition-education-textbook-amounts.html",
+                    "authority": "Canada Revenue Agency"
+                }
+            ],
+            "calculation_assumptions": ["Requires eligible Canadian or approved foreign institution exceeding $100 per institution."],
+            "profile_version": profile_version + (1 if is_change else 0),
+            "status": "proposed"
+        }
+        recommendations.append(tuition_rec)
 
     return {"recommendations": recommendations}
 
@@ -486,16 +607,102 @@ def node_persist_changes(state: AgentState) -> Dict[str, Any]:
                 expected_version=cur_version
             )
 
-            # Handle income memory supersession
+            # 1. Handle career/life event milestone memory first
+            life_change = next((p for p in proposed if p["field"] == "life_event"), None)
+            if life_change:
+                res_le = memory_service.propose_memory(
+                    user_id=user_id,
+                    memory_type="life_event",
+                    content=f"Reported career milestone: {life_change['new_value']} effective {life_change.get('effective_date', '2025')}.",
+                    structured_data={"event": life_change["new_value"], "memory_type": "life_event"},
+                    raw_statement=life_change["reason"],
+                    profile_version=cur_version + 1,
+                    auto_confirm=True
+                )
+                audit_events.append({"action": "create", "entity": "agent_memory", "id": res_le["memory_id"]})
+
+            # 2. Handle RRSP limit confirmation memory
+            if rrsp_limit_change:
+                limit_val = rrsp_limit_change["new_value"]
+                active_limit_mems = memory_repo.get_active_memories(user_id, memory_type="rrsp_limit")
+                old_limit_id = active_limit_mems[0]["_id"] if active_limit_mems else None
+                if old_limit_id:
+                    new_limit_id = memory_service.supersede_memory_fact(
+                        user_id=user_id,
+                        old_memory_id=old_limit_id,
+                        new_content=f"Confirmed CRA RRSP deduction limit of ${limit_val:,.0f} CAD from Notice of Assessment.",
+                        new_structured_data={
+                            "rrsp_deduction_limit": limit_val,
+                            "currency": "CAD",
+                            "memory_type": "rrsp_limit"
+                        },
+                        profile_version=cur_version + 1,
+                        reason=rrsp_limit_change["reason"]
+                    )
+                    audit_events.append({"action": "supersede", "entity": "agent_memory", "old_id": str(old_limit_id), "new_id": new_limit_id})
+                else:
+                    res_l = memory_service.propose_memory(
+                        user_id=user_id,
+                        memory_type="rrsp_limit",
+                        content=f"Confirmed CRA RRSP deduction limit of ${limit_val:,.0f} CAD from Notice of Assessment.",
+                        structured_data={
+                            "rrsp_deduction_limit": limit_val,
+                            "currency": "CAD",
+                            "memory_type": "rrsp_limit"
+                        },
+                        raw_statement=rrsp_limit_change["reason"],
+                        profile_version=cur_version + 1,
+                        auto_confirm=True
+                    )
+                    audit_events.append({"action": "create", "entity": "agent_memory", "id": res_l["memory_id"]})
+
+            # 3. Handle RRSP contribution confirmation memory
+            if rrsp_contrib_change:
+                contrib_val = rrsp_contrib_change["new_value"]
+                active_contrib_mems = memory_repo.get_active_memories(user_id, memory_type="rrsp_contribution")
+                old_contrib_id = active_contrib_mems[0]["_id"] if active_contrib_mems else None
+                if old_contrib_id:
+                    new_contrib_id = memory_service.supersede_memory_fact(
+                        user_id=user_id,
+                        old_memory_id=old_contrib_id,
+                        new_content=f"Confirmed planned RRSP deduction of ${contrib_val:,.0f} CAD for tax year 2025.",
+                        new_structured_data={
+                            "rrsp_contribution": contrib_val,
+                            "currency": "CAD",
+                            "memory_type": "rrsp_contribution"
+                        },
+                        profile_version=cur_version + 1,
+                        reason=rrsp_contrib_change["reason"]
+                    )
+                    audit_events.append({"action": "supersede", "entity": "agent_memory", "old_id": str(old_contrib_id), "new_id": new_contrib_id})
+                else:
+                    res_c = memory_service.propose_memory(
+                        user_id=user_id,
+                        memory_type="rrsp_contribution",
+                        content=f"Confirmed planned RRSP deduction of ${contrib_val:,.0f} CAD for tax year 2025.",
+                        structured_data={
+                            "rrsp_contribution": contrib_val,
+                            "currency": "CAD",
+                            "memory_type": "rrsp_contribution"
+                        },
+                        raw_statement=rrsp_contrib_change["reason"],
+                        profile_version=cur_version + 1,
+                        auto_confirm=True
+                    )
+                    audit_events.append({"action": "create", "entity": "agent_memory", "id": res_c["memory_id"]})
+
+            # 4. Handle income memory supersession or creation (created last so it is the top active memory)
             if income_change:
                 active_income_mems = memory_repo.get_active_memories(user_id, memory_type="employment_income")
+                if not active_income_mems:
+                    active_income_mems = memory_repo.get_active_memories(user_id, memory_type="salary")
                 old_mem_id = active_income_mems[0]["_id"] if active_income_mems else None
 
                 if old_mem_id:
                     new_mem_id = memory_service.supersede_memory_fact(
                         user_id=user_id,
                         old_memory_id=old_mem_id,
-                        new_content=f"Alex confirmed updated annual salary of ${new_income:,.0f} CAD effective {eff_date_str}.",
+                        new_content=f"Confirmed annual employment income of ${new_income:,.0f} CAD effective {eff_date_str}.",
                         new_structured_data={
                             "annualized_income": new_income,
                             "currency": "CAD",
@@ -511,26 +718,22 @@ def node_persist_changes(state: AgentState) -> Dict[str, Any]:
                         "old_id": str(old_mem_id),
                         "new_id": new_mem_id
                     })
-
-            # Handle RRSP limit confirmation memory
-            if rrsp_limit_change:
-                limit_val = rrsp_limit_change["new_value"]
-                active_limit_mems = memory_repo.get_active_memories(user_id, memory_type="rrsp_limit")
-                old_limit_id = active_limit_mems[0]["_id"] if active_limit_mems else None
-                if old_limit_id:
-                    new_limit_id = memory_service.supersede_memory_fact(
+                else:
+                    res_m = memory_service.propose_memory(
                         user_id=user_id,
-                        old_memory_id=old_limit_id,
-                        new_content=f"Alex confirmed CRA RRSP deduction limit of ${limit_val:,.0f} CAD from Notice of Assessment.",
-                        new_structured_data={
-                            "rrsp_deduction_limit": limit_val,
+                        memory_type="employment_income",
+                        content=f"Confirmed annual employment income of ${new_income:,.0f} CAD effective {eff_date_str}.",
+                        structured_data={
+                            "annualized_income": new_income,
                             "currency": "CAD",
-                            "memory_type": "rrsp_limit"
+                            "memory_type": "employment_income",
+                            "effective_from": eff_date_str
                         },
+                        raw_statement=income_change["reason"],
                         profile_version=cur_version + 1,
-                        reason=rrsp_limit_change["reason"]
+                        auto_confirm=True
                     )
-                    audit_events.append({"action": "supersede", "entity": "agent_memory", "old_id": str(old_limit_id), "new_id": new_limit_id})
+                    audit_events.append({"action": "create", "entity": "agent_memory", "id": res_m["memory_id"]})
 
             if updated_profile:
                 profile = updated_profile

@@ -124,6 +124,7 @@
         </button>
         <button onclick="switchTab('tab-recommendations')" id="btn-tab-recommendations" class="tab-btn px-3.5 py-2 text-xs font-semibold border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center gap-2">
           <i data-lucide="award" class="w-4 h-4"></i> Recommendations
+          <span id="recBadge" class="bg-emerald-500/20 text-emerald-300 text-[10px] px-1.5 py-0.2 rounded-full font-bold">0</span>
         </button>
         <button onclick="switchTab('tab-calculator')" id="btn-tab-calculator" class="tab-btn px-3.5 py-2 text-xs font-semibold border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center gap-2">
           <i data-lucide="calculator" class="w-4 h-4"></i> Deterministic What-If
@@ -465,6 +466,8 @@
           headers: { 'x-user-id': currentUserId }
         });
         const recs = await res.json();
+        const badge = document.getElementById('recBadge');
+        if (badge) badge.textContent = recs.length;
         const list = document.getElementById('recommendationsList');
         list.innerHTML = '';
 
