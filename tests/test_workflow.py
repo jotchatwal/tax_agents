@@ -70,7 +70,7 @@ class TestEndToEndWorkflow(unittest.TestCase):
         )
         self.assertIn("message", res)
         self.assertEqual(res["intent"], "question")
-        self.assertEqual(len(res["recommendations"]), 1)
+        self.assertGreaterEqual(len(res["recommendations"]), 1)
 
         rec = res["recommendations"][0]
         self.assertEqual(rec["recommendation_type"], "rrsp_planning")

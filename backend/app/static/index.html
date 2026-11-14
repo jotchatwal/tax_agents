@@ -124,6 +124,7 @@
         </button>
         <button onclick="switchTab('tab-recommendations')" id="btn-tab-recommendations" class="tab-btn px-3.5 py-2 text-xs font-semibold border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center gap-2">
           <i data-lucide="award" class="w-4 h-4"></i> Recommendations
+          <span id="recBadge" class="bg-emerald-500/20 text-emerald-300 text-[10px] px-1.5 py-0.2 rounded-full font-bold">0</span>
         </button>
         <button onclick="switchTab('tab-calculator')" id="btn-tab-calculator" class="tab-btn px-3.5 py-2 text-xs font-semibold border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center gap-2">
           <i data-lucide="calculator" class="w-4 h-4"></i> Deterministic What-If
@@ -163,12 +164,12 @@
             <div class="bg-slate-950/80 border border-slate-800 rounded-xl p-4">
               <span class="text-xs text-slate-400 block mb-1">Ontario Marginal Rate</span>
               <span id="profileMarginalRate" class="text-xl font-black text-white font-mono">29.65%</span>
-              <span class="text-[11px] text-slate-400 block mt-1">Federal (20.5%) + ON (9.15%)</span>
+              <span id="profileMarginalRateSubtitle" class="text-[11px] text-slate-400 block mt-1">Federal (20.5%) + ON (9.15%)</span>
             </div>
             <div class="bg-slate-950/80 border border-slate-800 rounded-xl p-4">
               <span class="text-xs text-slate-400 block mb-1">RRSP Deduction Room</span>
               <span id="profileRRSPRoom" class="text-xl font-black text-white font-mono">$18,000</span>
-              <span class="text-[11px] text-slate-400 block mt-1">From Notice of Assessment</span>
+              <span id="profileRRSPRoomSubtitle" class="text-[11px] text-slate-400 block mt-1">From Notice of Assessment</span>
             </div>
           </div>
 
@@ -179,18 +180,18 @@
             </h3>
             <div class="grid grid-cols-2 gap-4 text-xs">
               <div class="bg-slate-900/80 border border-slate-800/80 rounded-lg p-3">
-                <span class="text-slate-400 font-semibold block mb-1">Profile Version 1 (Baseline)</span>
+                <span class="text-slate-400 font-semibold block mb-1">Baseline Standard (Ontario)</span>
                 <p class="text-slate-300">Income: <span class="font-mono text-white">$85,000</span> CAD</p>
                 <p class="text-slate-300">Marginal Rate: <span class="font-mono text-white">29.65%</span></p>
                 <p class="text-slate-300 mt-2 font-medium">RRSP $5k Deduction Tax Savings:</p>
                 <p class="text-emerald-400 font-mono font-bold text-sm">$1,482.50 CAD</p>
               </div>
               <div class="bg-slate-900/80 border border-emerald-800/40 rounded-lg p-3">
-                <span class="text-emerald-400 font-semibold block mb-1">Profile Version 2 (After Raise)</span>
-                <p class="text-slate-300">Income: <span class="font-mono text-emerald-300 font-bold">$105,000</span> CAD</p>
-                <p class="text-slate-300">Marginal Rate: <span class="font-mono text-emerald-300 font-bold">31.48% / 37.91%</span></p>
+                <span id="compCurrentTitle" class="text-emerald-400 font-semibold block mb-1">Active Profile (Current)</span>
+                <p class="text-slate-300">Income: <span id="compCurrentIncome" class="font-mono text-emerald-300 font-bold">$105,000</span> CAD</p>
+                <p class="text-slate-300">Marginal Rate: <span id="compCurrentRate" class="font-mono text-emerald-300 font-bold">31.48%</span></p>
                 <p class="text-slate-300 mt-2 font-medium">RRSP $5k Deduction Tax Savings:</p>
-                <p class="text-emerald-400 font-mono font-bold text-sm">$1,574.00 CAD <span class="text-xs text-emerald-300 font-normal">(+$91.50)</span></p>
+                <p id="compCurrentSavings" class="text-emerald-400 font-mono font-bold text-sm">$1,574.00 CAD</p>
               </div>
             </div>
           </div>
@@ -366,7 +367,39 @@
         document.getElementById('profileVersionBadge').textContent = `v${p.profile_version}`;
         const salary = p.employment_periods?.[0]?.annualized_income || 0;
         document.getElementById('profileSalary').textContent = `$${salary.toLocaleString()}`;
-        document.getElementById('profileRRSPRoom').textContent = `$${(p.financial_context?.rrsp_deduction_limit || 0).toLocaleString()}`;
+
+        // Dynamic Marginal Rate & Subtitle
+        if (p.marginal_tax_rate_percent) {
+          document.getElementById('profileMarginalRate').textContent = p.marginal_tax_rate_percent;
+        }
+        if (p.marginal_rate_breakdown) {
+          const sub = document.getElementById('profileMarginalRateSubtitle');
+          if (sub) sub.textContent = p.marginal_rate_breakdown;
+        }
+
+        // Dynamic RRSP Deduction Room & Source
+        const rrspRoom = p.effective_rrsp_limit != null ? p.effective_rrsp_limit : (p.financial_context?.rrsp_deduction_limit || 0);
+        document.getElementById('profileRRSPRoom').textContent = `$${Math.round(rrspRoom).toLocaleString()}`;
+        if (p.rrsp_limit_source) {
+          const rSub = document.getElementById('profileRRSPRoomSubtitle');
+          if (rSub) rSub.textContent = p.rrsp_limit_source;
+        }
+
+        // Dynamic Circumstance Comparison Card
+        const compTitle = document.getElementById('compCurrentTitle');
+        const compInc = document.getElementById('compCurrentIncome');
+        const compRate = document.getElementById('compCurrentRate');
+        const compSav = document.getElementById('compCurrentSavings');
+        if (compInc && salary > 0) {
+          if (compTitle) compTitle.textContent = `Active Profile (v${p.profile_version})`;
+          compInc.textContent = `$${salary.toLocaleString()}`;
+          if (compRate && p.marginal_tax_rate_percent) compRate.textContent = p.marginal_tax_rate_percent;
+          if (compSav && p.marginal_tax_rate) {
+            const savings = 5000.0 * p.marginal_tax_rate;
+            compSav.textContent = `$${savings.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} CAD`;
+          }
+        }
+
         document.getElementById('rawProfileJson').textContent = JSON.stringify(p, null, 2);
       } catch (e) {
         console.error("Profile load error:", e);
@@ -433,6 +466,8 @@
           headers: { 'x-user-id': currentUserId }
         });
         const recs = await res.json();
+        const badge = document.getElementById('recBadge');
+        if (badge) badge.textContent = recs.length;
         const list = document.getElementById('recommendationsList');
         list.innerHTML = '';
 

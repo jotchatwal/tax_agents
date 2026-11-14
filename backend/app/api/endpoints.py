@@ -13,7 +13,12 @@ from backend.app.db.repositories import (
 )
 from backend.app.models.profile import TaxProfileModel
 from backend.app.models.recommendation import RecommendationModel
-from backend.app.services.tax_calc import calculate_rrsp_what_if, calculate_combined_tax
+from backend.app.services.tax_calc import (
+    calculate_rrsp_what_if,
+    calculate_combined_tax,
+    calculate_marginal_tax_rate,
+    FED_BRACKETS_2025
+)
 from backend.app.services.memory_service import MemoryGovernanceService
 from backend.app.graph.orchestrator import run_taxpilot_workflow
 
@@ -92,13 +97,41 @@ def list_demo_users():
 
 @router.get("/profile/current")
 def get_current_profile(tax_year: int = 2025, user_id: str = Depends(get_current_user_id)):
-    """Retrieve authenticated user's current tax profile."""
+    """Retrieve authenticated user's current tax profile with deterministic tax metrics."""
     profile = profile_repo.get_current_profile(user_id, tax_year)
     if not profile:
         raise HTTPException(status_code=404, detail="Tax profile not found for this tax year.")
     clean = sanitize_doc(dict(profile))
     clean["id"] = clean["_id"]
     del clean["_id"]
+
+    emp_periods = clean.get("employment_periods") or []
+    salary = float(emp_periods[0].get("annualized_income", 0.0)) if emp_periods else 0.0
+    fin_ctx = clean.get("financial_context") or {}
+
+    marginal_rate = calculate_marginal_tax_rate(salary, tax_year)
+    clean["marginal_tax_rate"] = marginal_rate
+    clean["marginal_tax_rate_percent"] = f"{marginal_rate * 100:.2f}%"
+
+    # Compute breakdown for UI subtitle
+    fed_rate = 0.15
+    for lower, upper, rate in FED_BRACKETS_2025:
+        if salary > lower:
+            fed_rate = rate
+    prov_rate = max(0.0, marginal_rate - fed_rate)
+    clean["marginal_rate_breakdown"] = f"Federal ({fed_rate*100:.1f}%) + ON ({prov_rate*100:.2f}%)"
+
+    # RRSP Deduction room: official NOA or CRA statutory estimate (18% up to $32,490)
+    rrsp_noa = fin_ctx.get("rrsp_deduction_limit")
+    statutory_estimate = min(salary * 0.18, 32490.0) if salary > 0 else 0.0
+    clean["estimated_rrsp_limit"] = round(statutory_estimate, 2)
+    if rrsp_noa is not None and rrsp_noa > 0:
+        clean["effective_rrsp_limit"] = float(rrsp_noa)
+        clean["rrsp_limit_source"] = "From Notice of Assessment"
+    else:
+        clean["effective_rrsp_limit"] = round(statutory_estimate, 2)
+        clean["rrsp_limit_source"] = "CRA Statutory Estimate (18%)"
+
     return clean
 
 @router.post("/profile")
