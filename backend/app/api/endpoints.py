@@ -17,6 +17,16 @@ from backend.app.services.tax_calc import calculate_rrsp_what_if, calculate_comb
 from backend.app.services.memory_service import MemoryGovernanceService
 from backend.app.graph.orchestrator import run_taxpilot_workflow
 
+def sanitize_doc(obj: Any) -> Any:
+    """Recursively convert ObjectId instances to strings for JSON serialization."""
+    if isinstance(obj, ObjectId):
+        return str(obj)
+    if isinstance(obj, dict):
+        return {k: sanitize_doc(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [sanitize_doc(x) for x in obj]
+    return obj
+
 router = APIRouter(prefix="/api")
 
 user_repo = UserRepository()
@@ -86,10 +96,10 @@ def get_current_profile(tax_year: int = 2025, user_id: str = Depends(get_current
     profile = profile_repo.get_current_profile(user_id, tax_year)
     if not profile:
         raise HTTPException(status_code=404, detail="Tax profile not found for this tax year.")
-    profile["id"] = str(profile["_id"])
-    profile["user_id"] = str(profile["user_id"])
-    del profile["_id"]
-    return profile
+    clean = sanitize_doc(dict(profile))
+    clean["id"] = clean["_id"]
+    del clean["_id"]
+    return clean
 
 @router.post("/profile")
 def save_profile(profile_data: TaxProfileModel, user_id: str = Depends(get_current_user_id)):
@@ -108,7 +118,7 @@ def submit_chat(req: ChatRequest, user_id: str = Depends(get_current_user_id)):
         request=req.message,
         session_id=req.session_id
     )
-    return res
+    return sanitize_doc(res)
 
 @router.get("/memories")
 def list_memories(
@@ -124,9 +134,8 @@ def list_memories(
 
     formatted = []
     for m in mems:
-        m_copy = dict(m)
-        m_copy["id"] = str(m_copy["_id"])
-        m_copy["user_id"] = str(m_copy["user_id"])
+        m_copy = sanitize_doc(dict(m))
+        m_copy["id"] = m_copy["_id"]
         del m_copy["_id"]
         # Do not expose raw vector embedding floats to API client
         if "embedding" in m_copy:
@@ -178,9 +187,8 @@ def list_recommendations(tax_year: int = 2025, user_id: str = Depends(get_curren
     recs = rec_repo.get_latest_recommendations(user_id, tax_year)
     out = []
     for r in recs:
-        r_copy = dict(r)
-        r_copy["id"] = str(r_copy["_id"])
-        r_copy["user_id"] = str(r_copy["user_id"])
+        r_copy = sanitize_doc(dict(r))
+        r_copy["id"] = r_copy["_id"]
         del r_copy["_id"]
         out.append(r_copy)
     return out
@@ -202,11 +210,8 @@ def get_audit_trail(limit: int = 50, user_id: str = Depends(get_current_user_id)
     logs = audit_repo.get_user_audit_logs(user_id, limit=limit)
     out = []
     for l in logs:
-        l_copy = dict(l)
-        l_copy["id"] = str(l_copy["_id"])
-        l_copy["user_id"] = str(l_copy["user_id"])
-        if l_copy.get("entity_id"):
-            l_copy["entity_id"] = str(l_copy["entity_id"])
+        l_copy = sanitize_doc(dict(l))
+        l_copy["id"] = l_copy["_id"]
         del l_copy["_id"]
         out.append(l_copy)
     return out
@@ -217,8 +222,8 @@ def get_tax_rules(tax_year: int = 2025):
     rules = tax_rule_repo.list_rules_for_calculation(tax_year=tax_year)
     out = []
     for r in rules:
-        r_copy = dict(r)
-        r_copy["id"] = str(r_copy["_id"])
+        r_copy = sanitize_doc(dict(r))
+        r_copy["id"] = r_copy["_id"]
         del r_copy["_id"]
         if "embedding" in r_copy:
             del r_copy["embedding"]

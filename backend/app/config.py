@@ -20,8 +20,8 @@ class Settings(BaseSettings):
 
     # LLM Settings
     LLM_PROVIDER: str = "gemini"  # gemini, openai, anthropic, mock
-    LLM_API_KEY: str = ""
-    LLM_MODEL: str = "gemini-1.5-flash"
+    LLM_API_KEY: str = Field(default_factory=lambda: os.environ.get("GEMINI_API_KEY") or os.environ.get("LLM_API_KEY") or "")
+    LLM_MODEL: str = "gemini-3.5-flash-lite"
 
     # Embedding Settings
     EMBEDDING_PROVIDER: str = "local"  # local (sentence-transformers), gemini, voyage, openai

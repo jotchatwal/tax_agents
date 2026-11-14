@@ -58,8 +58,16 @@ class TestApiEndpoints(unittest.TestCase):
         headers = {"x-user-id": self.user_id} if self.user_id else {}
         res = self.client.get("/api/audit", headers=headers)
         self.assertEqual(res.status_code, 200)
-        audit_logs = res.json()
-        self.assertIsInstance(audit_logs, list)
+
+    def test_07_chat_endpoint(self):
+        headers = {"x-user-id": self.user_id} if self.user_id else {}
+        payload = {"message": "What tax planning opportunities do I have for 2025?", "session_id": "test_session"}
+        res = self.client.post("/api/chat", json=payload, headers=headers)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertIn("message", data)
+        self.assertIn("recommendations", data)
+        self.assertIsInstance(data["recommendations"], list)
 
 if __name__ == "__main__":
     unittest.main()

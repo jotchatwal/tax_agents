@@ -6,6 +6,7 @@ from backend.app.graph.state import AgentState
 from backend.app.graph.nodes import (
     node_authenticate_and_authorize,
     node_classify_intent,
+    node_handle_greeting,
     node_load_profile,
     node_retrieve_memories,
     node_detect_conflicts,
@@ -25,6 +26,7 @@ def build_taxpilot_graph():
     # Add Nodes
     graph.add_node("authenticate", node_authenticate_and_authorize)
     graph.add_node("classify_intent", node_classify_intent)
+    graph.add_node("handle_greeting", node_handle_greeting)
     graph.add_node("load_profile", node_load_profile)
     graph.add_node("retrieve_memories", node_retrieve_memories)
     graph.add_node("detect_conflicts", node_detect_conflicts)
@@ -35,10 +37,24 @@ def build_taxpilot_graph():
     graph.add_node("persist_changes", node_persist_changes)
     graph.add_node("format_response", node_format_response)
 
-    # Linear and conditional edges
+    # Conditional router after intent classification
+    def route_after_intent(state: AgentState) -> str:
+        if state.get("intent") == "greeting":
+            return "handle_greeting"
+        return "load_profile"
+
+    # Edges
     graph.add_edge(START, "authenticate")
     graph.add_edge("authenticate", "classify_intent")
-    graph.add_edge("classify_intent", "load_profile")
+    graph.add_conditional_edges(
+        "classify_intent",
+        route_after_intent,
+        {
+            "handle_greeting": "handle_greeting",
+            "load_profile": "load_profile"
+        }
+    )
+    graph.add_edge("handle_greeting", END)
     graph.add_edge("load_profile", "retrieve_memories")
     graph.add_edge("retrieve_memories", "detect_conflicts")
     graph.add_edge("detect_conflicts", "retrieve_rules")
