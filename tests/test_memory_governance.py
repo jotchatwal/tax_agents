@@ -122,5 +122,15 @@ class TestMemoryGovernanceService(unittest.TestCase):
         self.assertEqual(doc["content"], "[DELETED BY USER]")
         self.assertIsNone(doc.get("embedding"))
 
+    @classmethod
+    def tearDownClass(cls):
+        if hasattr(cls, "user_id") and cls.user_id:
+            uid = ObjectId(cls.user_id)
+            cls.db["tax_profiles"].delete_many({"user_id": uid})
+            cls.db["agent_memories"].delete_many({"user_id": uid})
+            cls.db["audit_logs"].delete_many({"user_id": uid})
+            cls.db["recommendations"].delete_many({"user_id": uid})
+            cls.db["users"].delete_one({"_id": uid})
+
 if __name__ == "__main__":
     unittest.main()

@@ -149,5 +149,16 @@ class TestTenantIsolationAndMemoryGovernance(unittest.TestCase):
         self.assertEqual(success_update["profile_version"], 2)
         self.assertEqual(success_update["financial_context"]["rrsp_contribution"], 7000.0)
 
+    @classmethod
+    def tearDownClass(cls):
+        for uid_str in [getattr(cls, "user_a_id", None), getattr(cls, "user_b_id", None)]:
+            if uid_str:
+                uid = ObjectId(uid_str)
+                cls.db["tax_profiles"].delete_many({"user_id": uid})
+                cls.db["agent_memories"].delete_many({"user_id": uid})
+                cls.db["audit_logs"].delete_many({"user_id": uid})
+                cls.db["recommendations"].delete_many({"user_id": uid})
+                cls.db["users"].delete_one({"_id": uid})
+
 if __name__ == "__main__":
     unittest.main()

@@ -117,5 +117,15 @@ class TestEndToEndWorkflow(unittest.TestCase):
 
         print(f"\n[Session 2 Success] Updated $105k Profile Savings: ${saving_105k:,.2f} (Profile v2, Memory Superseded!)")
 
+    @classmethod
+    def tearDownClass(cls):
+        if hasattr(cls, "user_id") and cls.user_id:
+            uid = ObjectId(cls.user_id)
+            cls.db["tax_profiles"].delete_many({"user_id": uid})
+            cls.db["agent_memories"].delete_many({"user_id": uid})
+            cls.db["audit_logs"].delete_many({"user_id": uid})
+            cls.db["recommendations"].delete_many({"user_id": uid})
+            cls.db["users"].delete_one({"_id": uid})
+
 if __name__ == "__main__":
     unittest.main()

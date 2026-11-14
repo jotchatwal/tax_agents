@@ -54,7 +54,10 @@ class UserRepository(BaseRepository):
         return str(res.inserted_id)
 
     def list_demo_users(self) -> List[Dict[str, Any]]:
-        cursor = self.col.find({"status": "active"}).sort("created_at", 1)
+        cursor = self.col.find({
+            "email": {"$in": ["alex@example.com", "priya@example.com"]},
+            "status": "active"
+        }).sort("created_at", 1)
         return list(cursor)
 
 
