@@ -13,6 +13,7 @@ from backend.app.db.repositories import (
 )
 from backend.app.models.profile import TaxProfileModel
 from backend.app.models.recommendation import RecommendationModel
+from backend.app.models.common import serialize_mongo
 from backend.app.services.tax_calc import calculate_rrsp_what_if, calculate_combined_tax
 from backend.app.services.memory_service import MemoryGovernanceService
 from backend.app.graph.orchestrator import run_taxpilot_workflow
@@ -108,7 +109,7 @@ def submit_chat(req: ChatRequest, user_id: str = Depends(get_current_user_id)):
         request=req.message,
         session_id=req.session_id
     )
-    return res
+    return serialize_mongo(res)
 
 @router.get("/memories")
 def list_memories(

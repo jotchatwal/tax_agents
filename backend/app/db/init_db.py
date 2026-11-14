@@ -135,7 +135,23 @@ def init_collections_and_validators(db: Database):
         if other_col not in existing_collections:
             db.create_collection(other_col)
 
-def create_indexes(db: Database):
+def ensure_memory_vector_index(db: Database):
+    """Create the Atlas Vector Search index for agent_memories if it does not exist."""
+    # Load the definition from the JSON file (already written by save_vector_search_index_spec)
+    vector_spec_path = Path(__file__).parent.parent / "data" / "seed" / "vector_index_definition.json"
+    if not vector_spec_path.is_file():
+        logger.warning("Vector index definition not found; skipping vector index creation.")
+        return
+    with open(vector_spec_path, "r", encoding="utf-8") as f:
+        spec = json.load(f)
+    coll = db["agent_memories"]
+    try:
+        # MongoDB driver expects a dict with index details for a vectorSearch index
+        coll.create_index(spec, name=spec["name"])  # type: ignore[arg-type]
+        logger.info(f"Vector search index '{spec['name']}' created for 'agent_memories'.")
+    except Exception as e:
+        logger.warning(f"Failed to create vector search index: {e}")
+
     """Create all required compound and unique indexes."""
     logger.info("Creating indexes across collections...")
 
@@ -219,12 +235,56 @@ def save_vector_search_index_spec():
     logger.info(f"Vector search index definition written to: {out_file}")
     return vector_spec
 
+
+def ensure_memory_vector_index(db: Database) -> None:
+    """Ensure the Atlas Vector Search index exists for `agent_memories`."""
+    coll = db["agent_memories"]
+    try:
+        from pymongo.operations import SearchIndexModel
+        existing = [idx.get("name") for idx in coll.list_search_indexes()]
+        if "memory_vector_index" in existing:
+            logger.info("Atlas Vector Search index 'memory_vector_index' already exists.")
+            return
+
+        model = SearchIndexModel(
+            definition={
+                "fields": [
+                    {
+                        "type": "vector",
+                        "path": "embedding",
+                        "numDimensions": settings.EMBEDDING_DIMENSIONS,
+                        "similarity": "cosine"
+                    },
+                    {
+                        "type": "filter",
+                        "path": "user_id"
+                    },
+                    {
+                        "type": "filter",
+                        "path": "memory_type"
+                    },
+                    {
+                        "type": "filter",
+                        "path": "governance.status"
+                    }
+                ]
+            },
+            name="memory_vector_index",
+            type="vectorSearch"
+        )
+        coll.create_search_index(model=model)
+        logger.info("Successfully initiated creation of Atlas Vector Search index 'memory_vector_index'.")
+    except Exception as e:
+        logger.warning(f"Could not ensure vector search index: {e}")
+
 def initialize_database():
     db = get_db()
     init_collections_and_validators(db)
     create_indexes(db)
     save_vector_search_index_spec()
+    ensure_memory_vector_index(db)
     print("Database initialization complete.")
 
 if __name__ == "__main__":
     initialize_database()
+

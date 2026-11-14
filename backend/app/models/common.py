@@ -1,4 +1,5 @@
 from typing import Any
+from datetime import date, datetime
 from pydantic import GetCoreSchemaHandler
 from pydantic_core import core_schema
 from bson import ObjectId
@@ -30,3 +31,16 @@ class PyObjectId(str):
         if isinstance(v, str) and ObjectId.is_valid(v):
             return ObjectId(v)
         raise ValueError(f"Invalid ObjectId: {v}")
+
+def serialize_mongo(obj: Any) -> Any:
+    """Recursively convert ObjectIds and datetimes to JSON-safe primitives."""
+    if isinstance(obj, dict):
+        return {k: serialize_mongo(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple, set)):
+        return [serialize_mongo(item) for item in obj]
+    elif isinstance(obj, ObjectId):
+        return str(obj)
+    elif isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    return obj
+

@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse
 from backend.app.config import settings
 from backend.app.api.endpoints import router as api_router
 from backend.app.db.mongo import mongodb
+from backend.app.db.init_db import ensure_memory_vector_index
 
 app = FastAPI(
     title="TaxPilot AI - Memory You Can Govern",
@@ -59,6 +60,14 @@ def serve_index():
     if index_file.exists():
         return FileResponse(str(index_file))
     return {"message": "TaxPilot AI API is running. Open /docs for Swagger API documentation."}
+
+@app.on_event("startup")
+def on_startup():
+    try:
+        db = mongodb.get_database()
+        ensure_memory_vector_index(db)
+    except Exception as e:
+        pass
 
 @app.on_event("shutdown")
 def on_shutdown():
